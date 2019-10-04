@@ -56,6 +56,7 @@ import numpy as np
 import matplotlib.cm
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Line3D
 
 # ROS modules
 PKG = 'lidar_camera_calibration'
@@ -79,11 +80,12 @@ TF_BUFFER = None
 TF_LISTENER = None
 CV_BRIDGE = CvBridge()
 CAMERA_MODEL = image_geometry.PinholeCameraModel()
+SEL_2D_OK = False
+SEL_3D_OK = False
 
 # Global paths
 PKG_PATH = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 CALIB_PATH = 'calibration_data/lidar_camera_calibration'
-
 
 '''
 Keyboard handler thread
@@ -93,7 +95,9 @@ Outputs: None
 def handle_keyboard():
     global KEY_LOCK, PAUSE
     key = raw_input('Press [ENTER] to pause and pick points\n')
-    with KEY_LOCK: PAUSE = True
+    with KEY_LOCK: 
+        print("Pause true")
+        PAUSE = True
 
 
 '''
@@ -156,6 +160,8 @@ Outputs:
     Picked points saved in PKG_PATH/CALIB_PATH/img_corners.npy
 '''
 def extract_points_2D(img_msg, now, rectify=False):
+    global SEL_2D_OK
+    print("extract_points_2D")
     # Log PID
     rospy.loginfo('2D Picker PID: [%d]' % os.getpid())
 
@@ -198,16 +204,30 @@ def extract_points_2D(img_msg, now, rectify=False):
             # Reset list for future pick events
             del picked[0]
 
+    def onpress(event):
+        if event.key == "escape":
+            if len(corners) > 0:
+                del corners[-1]
+                del picked[-1]
+                if len(corners) > 0:
+                    picked.insert(0, corners[-1])
+                    del ax.lines[-1]
+                    ax.figure.canvas.draw_idle()
+            print("The number of picked corners = ", corners)
+
     # Display GUI
     fig.canvas.mpl_connect('button_press_event', onclick)
+    fig.canvas.mpl_connect('key_press_event', onpress)
     plt.show()
 
     # Save corner points and image
     rect = '_rect' if rectify else ''
-    if len(corners) > 1: del corners[-1] # Remove last duplicate
-    save_data(corners, 'img_corners%s.npy' % (rect), CALIB_PATH)
-    save_data(img, 'image_color%s-%d.jpg' % (rect, now.secs), 
+    if len(corners) == 5: 
+        del corners[-1] # Remove last duplicate
+        save_data(corners, 'img_corners%s.npy' % (rect), CALIB_PATH)
+        save_data(img, 'image_color%s-%d.jpg' % (rect, now.secs), 
         os.path.join(CALIB_PATH, 'images'), True)
+        SEL_2D_OK = True
 
 
 '''
@@ -221,19 +241,27 @@ Outputs:
     Picked points saved in PKG_PATH/CALIB_PATH/pcl_corners.npy
 '''
 def extract_points_3D(velodyne, now):
+    global SEL_3D_OK
+    print("extract_points_3D")
     # Log PID
     rospy.loginfo('3D Picker PID: [%d]' % os.getpid())
 
     # Extract points data
     points = ros_numpy.point_cloud2.pointcloud2_to_array(velodyne)
+    print(points)
     points = np.asarray(points.tolist())
+    print(points.shape)
 
     # Select points within chessboard range
-    inrange = np.where((points[:, 0] > 0) &
-                       (points[:, 0] < 2.5) &
-                       (np.abs(points[:, 1]) < 2.5) &
-                       (points[:, 2] < 2))
-    points = points[inrange[0]]
+    inrange = np.where((points[:, :, 0] < -2.0) &
+                       (points[:, :, 0] > -5.0) &
+                      #(np.abs(points[:, :, 1]) < 5.0) &
+                       (points[:, :, 1] <  1.5) &
+                       (points[:, :, 1] > -1.5) &
+                       (points[:, :, 2] <  1.0) &
+                       (points[:, :, 2] > -2.0))
+    
+    points = points[inrange[0], inrange[1]]
     print(points.shape)
     if points.shape[0] > 5:
         rospy.loginfo('PCL points available: %d', points.shape[0])
@@ -247,11 +275,19 @@ def extract_points_3D(velodyne, now):
 
     # Setup matplotlib GUI
     fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
+   #ax = fig.add_subplot(111, projection='3d')
+    ax = Axes3D(fig)
     ax.set_title('Select 3D LiDAR Points - %d' % now.secs, color='white')
     ax.set_axis_off()
-    ax.set_facecolor((0, 0, 0))
-    ax.scatter(points[:, 0], points[:, 1], points[:, 2], c=colors, s=2, picker=5)
+   #ax.set_facecolor((0, 0, 0))
+    ax.set_axis_bgcolor((0, 0, 0))
+    xs = points[:, 0]
+    xs_flat = xs.flatten()
+    ys = points[:, 1]
+    ys_flat = ys.flatten()
+    zs = points[:, 2]
+    zs_flat = zs.flatten()
+    ax.scatter(xs_flat, ys_flat, zs_flat, c=colors, picker=5)
 
     # Equalize display aspect ratio for all axes
     max_range = (np.array([points[:, 0].max() - points[:, 0].min(), 
@@ -263,6 +299,10 @@ def extract_points_3D(velodyne, now):
     ax.set_xlim(mid_x - max_range, mid_x + max_range)
     ax.set_ylim(mid_y - max_range, mid_y + max_range)
     ax.set_zlim(mid_z - max_range, mid_z + max_range)
+    print(points[:, 0].max(), points[:, 0].min())
+    print(points[:, 1].max(), points[:, 1].min())
+    print(points[:, 2].max(), points[:, 2].min())
+    print(max_range, mid_x, mid_y, mid_z)
 
     # Pick points
     picked, corners = [], []
@@ -288,13 +328,27 @@ def extract_points_3D(velodyne, now):
             # Reset list for future pick events
             del picked[0]
 
+    def onpress(event):
+        if event.key == "escape":
+            if len(corners) > 0:
+                del corners[-1]
+                del picked[-1]
+                if len(corners) > 0:
+                    picked.insert(0, corners[-1])
+                    del ax.lines[-1]
+                    ax.figure.canvas.draw_idle()
+            print("The number of picked corners = ", corners)
+
     # Display GUI
     fig.canvas.mpl_connect('pick_event', onpick)
+    fig.canvas.mpl_connect('key_press_event', onpress)
     plt.show()
 
     # Save corner points
-    if len(corners) > 1: del corners[-1] # Remove last duplicate
-    save_data(corners, 'pcl_corners.npy', CALIB_PATH)
+    if len(corners) > 5: 
+        del corners[-1] # Remove last duplicate
+        save_data(corners, 'pcl_corners.npy', CALIB_PATH)
+        SEL_3D_OK = True
 
 
 '''
@@ -314,10 +368,12 @@ def calibrate(points2D=None, points3D=None):
     if points2D is None: points2D = np.load(os.path.join(folder, 'img_corners.npy'))
     if points3D is None: points3D = np.load(os.path.join(folder, 'pcl_corners.npy'))
     
+    print(points2D.shape[0], points3D.shape[0])
     # Check points shape
     assert(points2D.shape[0] == points3D.shape[0])
-    if not (points2D.shape[0] >= 5):
-        rospy.logwarn('PnP RANSAC Requires minimum 5 points')
+    if not (points2D.shape[0] >= 12):
+        rospy.logwarn('PnP RANSAC Requires minimum 5 points.')
+        rospy.logwarn('But 12 points are required for this tool.')
         return
 
     # Obtain camera matrix and distortion coefficients
@@ -417,7 +473,8 @@ Inputs:
 Outputs: None
 '''
 def callback(image, camera_info, velodyne, image_pub=None):
-    global CAMERA_MODEL, FIRST_TIME, PAUSE, TF_BUFFER, TF_LISTENER
+    print("waiting [Enter] to start picking points ...")
+    global CAMERA_MODEL, FIRST_TIME, PAUSE, TF_BUFFER, TF_LISTENER, SEL_2D_OK, SEL_3D_OK
 
     # Setup the pinhole camera model
     if FIRST_TIME:
@@ -438,6 +495,7 @@ def callback(image, camera_info, velodyne, image_pub=None):
 
     # Calibration mode
     elif PAUSE:
+        print("calibrate")
         # Create GUI processes
         now = rospy.get_rostime()
         img_p = multiprocessing.Process(target=extract_points_2D, args=[image, now])
@@ -446,7 +504,14 @@ def callback(image, camera_info, velodyne, image_pub=None):
         img_p.join(); pcl_p.join()
 
         # Calibrate for existing corresponding points
-        calibrate()
+
+        if SEL_2D_OK and SEL_3D_OK: 
+            calibrate()
+        else:
+            print("[INFO] You have to pick 5 points to make rectangle!!")
+
+        SEL_2D_OK = False
+        SEL_3D_OK = False
 
         # Resume listener
         with KEY_LOCK: PAUSE = False
@@ -499,9 +564,9 @@ if __name__ == '__main__':
 
     # Calibration mode, rosrun
     if sys.argv[1] == '--calibrate':
-        camera_info = '/sensors/camera/camera_info'
-        image_color = '/sensors/camera/image_color'
-        velodyne_points = '/sensors/velodyne_points'
+        camera_info = '/usb_cam/camera_info'
+        image_color = '/usb_cam/image_raw'
+        velodyne_points = '/os1_cloud_node/points'
         camera_lidar = None
         PROJECT_MODE = False
     # Projection mode, run from launch file
