@@ -69,8 +69,10 @@ import image_geometry
 import message_filters
 from cv_bridge import CvBridge, CvBridgeError
 from tf.transformations import euler_from_matrix
+from tf.transformations import quaternion_from_euler
 from tf2_sensor_msgs.tf2_sensor_msgs import do_transform_cloud
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2
+import yaml
 
 # Global variables
 PAUSE = False
@@ -80,8 +82,6 @@ TF_BUFFER = None
 TF_LISTENER = None
 CV_BRIDGE = CvBridge()
 CAMERA_MODEL = image_geometry.PinholeCameraModel()
-SEL_2D_OK = False
-SEL_3D_OK = False
 
 # Global paths
 PKG_PATH = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -160,7 +160,6 @@ Outputs:
     Picked points saved in PKG_PATH/CALIB_PATH/img_corners.npy
 '''
 def extract_points_2D(img_msg, now, rectify=False):
-    global SEL_2D_OK
     print("extract_points_2D")
     # Log PID
     rospy.loginfo('2D Picker PID: [%d]' % os.getpid())
@@ -203,6 +202,7 @@ def extract_points_2D(img_msg, now, rectify=False):
 
             # Reset list for future pick events
             del picked[0]
+        print(len(corners))
 
     def onpress(event):
         if event.key == "escape":
@@ -227,8 +227,6 @@ def extract_points_2D(img_msg, now, rectify=False):
         save_data(corners, 'img_corners%s.npy' % (rect), CALIB_PATH)
         save_data(img, 'image_color%s-%d.jpg' % (rect, now.secs), 
         os.path.join(CALIB_PATH, 'images'), True)
-        SEL_2D_OK = True
-
 
 '''
 Runs the LiDAR point selection GUI process
@@ -241,7 +239,6 @@ Outputs:
     Picked points saved in PKG_PATH/CALIB_PATH/pcl_corners.npy
 '''
 def extract_points_3D(velodyne, now):
-    global SEL_3D_OK
     print("extract_points_3D")
     # Log PID
     rospy.loginfo('3D Picker PID: [%d]' % os.getpid())
@@ -327,6 +324,7 @@ def extract_points_3D(velodyne, now):
 
             # Reset list for future pick events
             del picked[0]
+        print(len(corners))
 
     def onpress(event):
         if event.key == "escape":
@@ -337,7 +335,7 @@ def extract_points_3D(velodyne, now):
                     picked.insert(0, corners[-1])
                     del ax.lines[-1]
                     ax.figure.canvas.draw_idle()
-            print("The number of picked corners = ", corners)
+            print("The number of picked corners = ", len(corners))
 
     # Display GUI
     fig.canvas.mpl_connect('pick_event', onpick)
@@ -345,11 +343,9 @@ def extract_points_3D(velodyne, now):
     plt.show()
 
     # Save corner points
-    if len(corners) > 5: 
+    if len(corners) == 5: 
         del corners[-1] # Remove last duplicate
         save_data(corners, 'pcl_corners.npy', CALIB_PATH)
-        SEL_3D_OK = True
-
 
 '''
 Calibrate the LiDAR and image points using OpenCV PnP RANSAC
@@ -365,6 +361,14 @@ Outputs:
 def calibrate(points2D=None, points3D=None):
     # Load corresponding points
     folder = os.path.join(PKG_PATH, CALIB_PATH)
+    img_npy_file = os.path.join(folder, 'img_corners.npy')
+    pcl_npy_file = os.path.join(folder, 'pcl_corners.npy')
+    if os.path.isfile(img_npy_file) is False: 
+        rospy.logwarn("img corners are not exist.")
+        return
+    if os.path.isfile(pcl_npy_file) is False: 
+        rospy.logwarn("pcl corners are not exist.")
+        return
     if points2D is None: points2D = np.load(os.path.join(folder, 'img_corners.npy'))
     if points3D is None: points3D = np.load(os.path.join(folder, 'pcl_corners.npy'))
     
@@ -388,7 +392,7 @@ def calibrate(points2D=None, points3D=None):
     # Convert rotation vector
     rotation_matrix = cv2.Rodrigues(rotation_vector)[0]
     euler = euler_from_matrix(rotation_matrix)
-    
+
     # Save extrinsics
     np.savez(os.path.join(folder, 'extrinsics.npz'),
         euler=euler, R=rotation_matrix, T=translation_vector.T)
@@ -398,6 +402,26 @@ def calibrate(points2D=None, points3D=None):
     print('Rotation Matrix:', rotation_matrix)
     print('Translation Offsets:', translation_vector.T)
 
+    # LiDAR to camera -> camera to LiDAR
+    quaternion = quaternion_from_euler(-euler[2], -euler[1], -euler[0], 'szyx')
+    translation = [translation_vector.T[0, 2], -translation_vector.T[0, 0], translation_vector.T[0, 1]]
+    
+    yaml_stream = open(folder+'/'+TF_NAME+'.yaml', 'w')
+    yaml_stream.write("%s: \n" % TF_NAME) 
+    yaml_stream.write("    child_frame_id: %s\n" % CHILD_FRAME) 
+    yaml_stream.write("    header: \n") 
+    yaml_stream.write("        frame_id: %s\n" % PARENT_FRAME) 
+    yaml_stream.write("    transform: \n") 
+    yaml_stream.write("        translation: \n") 
+    yaml_stream.write("            x: %f\n" % translation[0])
+    yaml_stream.write("            y: %f\n" % translation[1])
+    yaml_stream.write("            z: %f\n" % translation[2])
+    yaml_stream.write("        rotation: \n") 
+    yaml_stream.write("            x: %f\n" % quaternion[0])
+    yaml_stream.write("            y: %f\n" % quaternion[1])
+    yaml_stream.write("            z: %f\n" % quaternion[2])
+    yaml_stream.write("            w: %f\n" % quaternion[3])
+    yaml_stream.close()
 
 '''
 Projects the point cloud on to the image plane using the extrinsics
@@ -474,7 +498,7 @@ Outputs: None
 '''
 def callback(image, camera_info, velodyne, image_pub=None):
     print("waiting [Enter] to start picking points ...")
-    global CAMERA_MODEL, FIRST_TIME, PAUSE, TF_BUFFER, TF_LISTENER, SEL_2D_OK, SEL_3D_OK
+    global CAMERA_MODEL, FIRST_TIME, PAUSE, TF_BUFFER, TF_LISTENER
 
     # Setup the pinhole camera model
     if FIRST_TIME:
@@ -504,14 +528,7 @@ def callback(image, camera_info, velodyne, image_pub=None):
         img_p.join(); pcl_p.join()
 
         # Calibrate for existing corresponding points
-
-        if SEL_2D_OK and SEL_3D_OK: 
-            calibrate()
-        else:
-            print("[INFO] You have to pick 5 points to make rectangle!!")
-
-        SEL_2D_OK = False
-        SEL_3D_OK = False
+        calibrate()
 
         # Resume listener
         with KEY_LOCK: PAUSE = False
@@ -534,6 +551,7 @@ def listener(camera_info, image_color, velodyne_points, camera_lidar=None):
     rospy.init_node('calibrate_camera_lidar', anonymous=True)
     rospy.loginfo('Current PID: [%d]' % os.getpid())
     rospy.loginfo('Projection mode: %s' % PROJECT_MODE)
+    rospy.loginfo('TF name: %s' % TF_NAME)
     rospy.loginfo('CameraInfo topic: %s' % camera_info)
     rospy.loginfo('Image topic: %s' % image_color)
     rospy.loginfo('PointCloud2 topic: %s' % velodyne_points)
@@ -564,11 +582,18 @@ if __name__ == '__main__':
 
     # Calibration mode, rosrun
     if sys.argv[1] == '--calibrate':
+        print('argc=', len(sys.argv))
+        if len(sys.argv) < 5: 
+            print('rosrun lidar_camera_calibration calibrate_camera_lidar.py --calibrate <tf_name> <child_frame_id> <parent_frame_id>')
+            exit()
         camera_info = '/usb_cam/camera_info'
         image_color = '/usb_cam/image_raw'
         velodyne_points = '/os1_cloud_node/points'
         camera_lidar = None
         PROJECT_MODE = False
+        TF_NAME = sys.argv[2]
+        CHILD_FRAME = sys.argv[3]
+        PARENT_FRAME = sys.argv[4]
     # Projection mode, run from launch file
     else:
         camera_info = rospy.get_param('camera_info_topic')
