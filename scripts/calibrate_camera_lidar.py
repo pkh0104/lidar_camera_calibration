@@ -382,7 +382,8 @@ def calibrate(points2D=None, points3D=None):
 
     # Obtain camera matrix and distortion coefficients
     camera_matrix = CAMERA_MODEL.intrinsicMatrix()
-    dist_coeffs = CAMERA_MODEL.distortionCoeffs()
+   #dist_coeffs = CAMERA_MODEL.distortionCoeffs()
+    dist_coeffs = np.zeros((4, 1), dtype='f8')
 
     # Estimate extrinsics
     success, rotation_vector, translation_vector, _ = cv2.solvePnPRansac(points3D, 
