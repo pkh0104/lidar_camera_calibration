@@ -31,50 +31,24 @@
         <!-- Remap input topics -->
         <remap from="image_mono" to="$(arg camera)/image_raw" />
         <remap from="camera_info" to="$(arg camera)/camera_info" />
-
         <!-- Remap output topics -->
         <remap from="image_rect" to="$(arg camera)/image_rect_color" />
     </node>
-
-    <!-- Wire static transform from the world to velodyne frame -->
-    <!--node
-        pkg="tf2_ros"
-        type="static_transform_publisher"
-        name="world_velodyne_tf"
-        output="screen"
-        args="-0.14614803 -0.49683771 -0.27546327 2.02406989 -1.35998386 -0.44460865 world velodyne" /-->
-        <rosparam command="load" file="$(find lidar_camera_calibration)/calibration_data/lidar_camera_calibration/cal_with_distorted_img/front_fhd_cam_to_ouster_lidar_extrinsic.yaml"/>
-	  <node
-				pkg="tf2_ros"
-				type="static_transform_publisher"
-				name="front_fhd_cam_to_ouster_lidar_tf"
-				output="screen"
-				args="/front_fhd_cam_to_ouster_lidar_extrinsic" />
 
     <!-- Setup params for Camera-LiDAR calibration script -->
     <param name="camera_info_topic" type="str" value="$(arg camera)/camera_info" />
     <param name="image_rect_topic" type="str" value="$(arg camera)/image_rect_color" />
     <param name="velodyne_points_topic" type="str" value="/os1_cloud_node/points" />
-    <param name="camera_lidar_topic" type="str" value="$(arg camera)/camera_lidar" />
-    <param name="project_mode" type="bool" value="true" />
+    <param name="tf_name" type="str" value="front_fhd_cam_to_ouster_lidar_extrinsic" />
+    <param name="child_frame" type="str" value="front_fhd_cam" />
+    <param name="parent_frame" type="str" value="os1_lidar" />
 
-    <!-- Run Camera-LiDAR projection script -->
+    <!-- Run Camera-LiDAR calibration script -->
     <node   
         pkg="lidar_camera_calibration"
         type="calibrate_camera_lidar.py"
         name="calibrate_camera_lidar"
-        output="screen" />
-
-    <!-- Run image view to display the projected points image -->
-    <node 
-        name="camera_lidar_projection" 
-        pkg="image_view"
-        type="image_view"
-        respawn="false"
-        output="screen">
-        
-        <!-- Remap input topics -->
-        <remap from="image" to="$(arg camera)/camera_lidar" />
-    </node>
+				output="screen" 
+				args="--calibrate"/>
 
 </launch>

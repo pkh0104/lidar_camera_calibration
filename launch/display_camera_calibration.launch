@@ -4,9 +4,9 @@
     <arg name="camera" default="/usb_cam" />
 
     <!-- Play rosbag record -->
-    <include file="$(find lidar_camera_calibration)/launch/play_rosbag.launch">
-        <arg name="bagfile" value="2019-09-20-10-14-11.bag" />
-    </include>
+    <!--include file="$(find lidar_camera_calibration)/launch/play_rosbag.launch">
+        <arg name="bagfile" value="2019-09-24-13-56-36.bag" />
+    </include-->
 
     <!-- Nodelet manager for this pipeline -->
     <node

@@ -17,19 +17,19 @@
         output="screen" />
 
     <node
-        pkg="image_proc"
-        type="image_proc" 
-        name="image_proc_node1" />
+        pkg="image_proc_fisheye"
+        type="image_proc_fisheye_exe" 
+        name="image_proc_fisheye" />
 
     <!-- Run image_proc/rectify nodelet -->
     <node
         pkg="nodelet"
         type="nodelet"
         name="rectify_color"
-        args="load image_proc/rectify lidar_camera_manager --no-bond" >
+        args="load image_proc_fisheye/RectifyNodelet lidar_camera_manager --no-bond" >
         
         <!-- Remap input topics -->
-        <remap from="image_mono" to="$(arg camera)/image_raw" />
+        <remap from="image_raw" to="$(arg camera)/image_raw" />
         <remap from="camera_info" to="$(arg camera)/camera_info" />
 
         <!-- Remap output topics -->
@@ -43,7 +43,7 @@
         name="world_velodyne_tf"
         output="screen"
         args="-0.14614803 -0.49683771 -0.27546327 2.02406989 -1.35998386 -0.44460865 world velodyne" /-->
-        <rosparam command="load" file="$(find lidar_camera_calibration)/calibration_data/lidar_camera_calibration/cal_with_distorted_img/front_fhd_cam_to_ouster_lidar_extrinsic.yaml"/>
+    <rosparam command="load" file="$(find lidar_camera_calibration)/calibration_data/lidar_camera_calibration/front_fhd_cam_to_ouster_lidar_extrinsic.yaml"/>
 	  <node
 				pkg="tf2_ros"
 				type="static_transform_publisher"

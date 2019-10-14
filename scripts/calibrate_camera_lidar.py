@@ -70,6 +70,7 @@ import message_filters
 from cv_bridge import CvBridge, CvBridgeError
 from tf.transformations import euler_from_matrix
 from tf.transformations import quaternion_from_euler
+from tf.transformations import euler_from_quaternion
 from tf2_sensor_msgs.tf2_sensor_msgs import do_transform_cloud
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2
 import yaml
@@ -445,22 +446,45 @@ def project_point_cloud(velodyne, img_msg, image_pub):
 
     # Transform the point cloud
     try:
-        transform = TF_BUFFER.lookup_transform('world', 'velodyne', rospy.Time())
+        transform = TF_BUFFER.lookup_transform('os1_lidar', 'front_fhd_cam', rospy.Time())
+        print(transform)
+        euler = euler_from_quaternion([transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w], axes='sxyz')
+        print(euler[0]/3.141592*180.0, euler[1]/3.141592*180.0, euler[2]/3.141592*180.0)
+        t_x = -transform.transform.translation.y
+        t_y = transform.transform.translation.z
+        t_z = transform.transform.translation.x
+        r = quaternion_from_euler(-euler[2], -euler[1], -euler[0], axes='szyx')
+        transform.transform.rotation.x = r[0]
+        transform.transform.rotation.y = r[1]
+        transform.transform.rotation.z = r[2]
+        transform.transform.rotation.w = r[3]
+        transform.transform.translation.x = t_x
+        transform.transform.translation.y = t_y
+        transform.transform.translation.z = t_z
         velodyne = do_transform_cloud(velodyne, transform)
     except tf2_ros.LookupException:
-        pass
+        return
 
     # Extract points from message
     points3D = ros_numpy.point_cloud2.pointcloud2_to_array(velodyne)
     points3D = np.asarray(points3D.tolist())
+    print("check1 ", points3D.shape)
     
     # Filter points in front of camera
     inrange = np.where((points3D[:, 2] > 0) &
-                       (points3D[:, 2] < 6) &
-                       (np.abs(points3D[:, 0]) < 6) &
-                       (np.abs(points3D[:, 1]) < 6))
+                       (points3D[:, 2] < 5) &
+                       (np.abs(points3D[:, 0]) < 5) &
+                       (np.abs(points3D[:, 1]) < 5))
+   #inrange = np.where((points3D[:, 0] < -2.0) &
+   #                   (points3D[:, 0] > -5.0) &
+   #                  #(np.abs(poinD[:, :, 1]) < 5.0) &
+   #                   (points3D[:, 1] <  1.5) &
+   #                   (points3D[:, 1] > -1.5) &
+   #                   (points3D[:, 2] <  1.0) &
+   #                   (points3D[:, 2] > -2.0))
     max_intensity = np.max(points3D[:, -1])
     points3D = points3D[inrange[0]]
+    print("check2 ", points3D.shape)
 
     # Color map for the points
     cmap = matplotlib.cm.get_cmap('jet')
@@ -469,6 +493,8 @@ def project_point_cloud(velodyne, img_msg, image_pub):
     # Project to 2D and filter points within image boundaries
     points2D = [ CAMERA_MODEL.project3dToPixel(point) for point in points3D[:, :3] ]
     points2D = np.asarray(points2D)
+    print("check3 ", points2D.shape)
+    print("check4 ", img.shape)
     inrange = np.where((points2D[:, 0] >= 0) &
                        (points2D[:, 1] >= 0) &
                        (points2D[:, 0] < img.shape[1]) &
@@ -582,23 +608,32 @@ def listener(camera_info, image_color, velodyne_points, camera_lidar=None):
 if __name__ == '__main__':
 
     # Calibration mode, rosrun
+    TF_NAME = None
+    CHILD_FRAME = None
+    PARENT_FRAME = None
+    camera_lidar = None
+    PROJECT_MODE = False
     if sys.argv[1] == '--calibrate':
         print('argc=', len(sys.argv))
-        if len(sys.argv) < 5: 
-            print('rosrun lidar_camera_calibration calibrate_camera_lidar.py --calibrate <tf_name> <child_frame_id> <parent_frame_id>')
-            exit()
-        camera_info = '/usb_cam/camera_info'
-        image_color = '/usb_cam/image_raw'
-        velodyne_points = '/os1_cloud_node/points'
-        camera_lidar = None
-        PROJECT_MODE = False
-        TF_NAME = sys.argv[2]
-        CHILD_FRAME = sys.argv[3]
-        PARENT_FRAME = sys.argv[4]
+       #if len(sys.argv) < 5: 
+       #    print('rosrun lidar_camera_calibration calibrate_camera_lidar.py --calibrate <tf_name> <child_frame_id> <parent_frame_id>')
+       #    exit()
+       #camera_info = '/usb_cam/camera_info'
+       #image_color = '/usb_cam/image_raw'
+       #velodyne_points = '/os1_cloud_node/points'
+       #TF_NAME = sys.argv[2]
+       #CHILD_FRAME = sys.argv[3]
+       #PARENT_FRAME = sys.argv[4]
+        camera_info = rospy.get_param('camera_info_topic')
+        image_color = rospy.get_param('image_rect_topic')
+        velodyne_points = rospy.get_param('velodyne_points_topic')
+        TF_NAME = rospy.get_param('tf_name')
+        CHILD_FRAME = rospy.get_param('child_frame')
+        PARENT_FRAME = rospy.get_param('parent_frame')
     # Projection mode, run from launch file
     else:
         camera_info = rospy.get_param('camera_info_topic')
-        image_color = rospy.get_param('image_color_topic')
+        image_color = rospy.get_param('image_rect_topic')
         velodyne_points = rospy.get_param('velodyne_points_topic')
         camera_lidar = rospy.get_param('camera_lidar_topic')
         PROJECT_MODE = bool(rospy.get_param('project_mode'))

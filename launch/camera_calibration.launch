@@ -7,7 +7,7 @@
 
 	<!-- Play rosbag record -->
 	<include file="$(find lidar_camera_calibration)/launch/play_rosbag.launch">
-		<arg name="bagfile" value="2019-09-06-16-47-30.bag" />
+		<arg name="bagfile" value="2019-09-24-13-56-36.bag" />
 	</include>
 
 	<!-- Run camera calibration -->
